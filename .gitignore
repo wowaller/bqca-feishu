@@ -1,0 +1,29 @@
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary chart directory (used by chart_renderer.py)
+tmp_charts/
+
+# Local credentials & environment overrides (if any)
+.env
+.env.local
+config_local.py
+
+# Editors & IDE configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System Files
+.DS_Store
+Thumbs.db

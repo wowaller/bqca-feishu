@@ -1,0 +1,20 @@
+{
+  "unauthorized_action": "fallback",
+  "default_target_sa": "bqca-restricted@binggang-lab.iam.gserviceaccount.com",
+  "users": {
+    "沃秉纲": {
+      "name": "沃秉纲 (Restrict Priv Lead)",
+      "target_sa": "bqca-restricted@binggang-lab.iam.gserviceaccount.com",
+      "description": "Restricted access to US game events only"
+    },
+    "user_restricted_002": {
+      "name": "US Market Specialist",
+      "target_sa": "bqca-restricted@binggang-lab.iam.gserviceaccount.com",
+      "description": "Restricted access to US game events only"
+    }
+  },
+  "roles": {
+    "high_privilege": "bqca-high-priv@binggang-lab.iam.gserviceaccount.com",
+    "restricted": "bqca-restricted@binggang-lab.iam.gserviceaccount.com"
+  }
+}

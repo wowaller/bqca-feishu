@@ -27,3 +27,5 @@ config_local.py
 # System Files
 .DS_Store
 Thumbs.db
+
+.archive/

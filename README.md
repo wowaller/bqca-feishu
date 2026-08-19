@@ -172,11 +172,29 @@ FILTER USING (target_country = 'United States');
 
 ## 4. GCP IAM & Service Account Provisioning
 
-### 4.1. Base Runner Identity (Bot Runtime)
-The base identity running the bot (e.g. Cloud Run SA or ADC) requires permission to generate impersonated tokens for the target Service Accounts:
+This architecture uses a **2-Tier Service Account Design** to enforce the principle of least privilege and strict separation of duties:
+
+| Service Account | Role / Purpose | Direct BigQuery & Data Access? | Key IAM Permissions |
+| :--- | :--- | :--- | :--- |
+| **`bqca-base-runner`** | **Host Runtime Identity** (Attached to Cloud Run / Compute) | ❌ **None** (Zero data access) | `roles/iam.serviceAccountTokenCreator` on target SAs |
+| **`bqca-high-priv`** | **Target Identity: Global Tier** (Impersonated on demand) | ✅ **Full Global Data** | `geminidataanalytics.dataAgentUser`, `bigquery.jobUser`, `high_priv_all_access` RLS |
+| **`bqca-restricted`** | **Target Identity: US-Only Tier** (Impersonated on demand) | ✅ **Filtered US Data Only** | `geminidataanalytics.dataAgentUser`, `bigquery.jobUser`, `restricted_us_only` RLS |
+
+### 4.1. Why `bqca-base-runner` is Needed
+
+1. **Defense-in-Depth**: The bot application container runs under `bqca-base-runner`. Even if the container is compromised or a bug occurs, the attacker gains **zero direct access to BigQuery datasets** because `bqca-base-runner` has no BigQuery read permissions.
+2. **Dynamic Delegation**: The base runner's only purpose is to authenticate against Google Cloud IAM and dynamically request short-lived (1-hour) OAuth2 access tokens for the target SAs (`bqca-high-priv` or `bqca-restricted`) via the `iamcredentials.googleapis.com` API.
+3. **Audit Trail**: Cloud Audit Logs clearly differentiate between the container host identity (`bqca-base-runner`) and the impersonated data caller identity (`bqca-high-priv` / `bqca-restricted`).
+
+### 4.2. Step 1: Create the Base Runner Service Account
 
 ```bash
-# Grant Service Account Token Creator role to the Base Runner SA
+# 1. Create the host runtime service account
+gcloud iam service-accounts create bqca-base-runner \
+    --description="Host runtime service account for Feishu BQCA Bot container" \
+    --display-name="BQCA Base Runner SA"
+
+# 2. Grant Token Creator role on target SAs to bqca-base-runner
 gcloud iam service-accounts add-iam-policy-binding bqca-high-priv@your-project.iam.gserviceaccount.com \
     --member="serviceAccount:bqca-base-runner@your-project.iam.gserviceaccount.com" \
     --role="roles/iam.serviceAccountTokenCreator"
@@ -186,21 +204,44 @@ gcloud iam service-accounts add-iam-policy-binding bqca-restricted@your-project.
     --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-### 4.2. Target Service Accounts (Data Access)
-Each target Service Account needs:
-1. **`roles/geminidataanalytics.dataAgentUser`** (or `roles/cloudaicompanion.user`): To call BQCA Agents.
-2. **`roles/bigquery.jobUser`**: To execute BigQuery query jobs.
-3. **`roles/bigquery.dataViewer`** (or Dataset `READER`): To read tables protected by RLS.
+> [!NOTE]
+> **Understanding the `add-iam-policy-binding` Syntax**:
+> In Google Cloud IAM, Service Accounts act as **both identities and resources**.
+> * The **first argument** (`bqca-high-priv@...`) is the **target resource** being protected.
+> * The **`--member`** (`serviceAccount:bqca-base-runner@...`) is the **caller identity** being granted permission.
+> * The **`--role="roles/iam.serviceAccountTokenCreator"`** grants `bqca-base-runner` permission to generate tokens *for* `bqca-high-priv`.
+>
+> *(This resource-level binding is Google Cloud's recommended least-privilege practice, ensuring `bqca-base-runner` can only impersonate these specific accounts rather than all accounts in the project).*
+
+### 4.3. Step 2: Create and Provision Target Service Accounts
 
 ```bash
-# Example binding for target SA
-gcloud projects add-iam-policy-binding your-project \
-    --member="serviceAccount:bqca-restricted@your-project.iam.gserviceaccount.com" \
-    --role="roles/geminidataanalytics.dataAgentUser"
+# 1. Create the target SAs
+gcloud iam service-accounts create bqca-high-priv \
+    --description="Target SA with unrestricted global BQCA data access" \
+    --display-name="BQCA High Privilege SA"
 
-gcloud projects add-iam-policy-binding your-project \
-    --member="serviceAccount:bqca-restricted@your-project.iam.gserviceaccount.com" \
-    --role="roles/bigquery.jobUser"
+gcloud iam service-accounts create bqca-restricted \
+    --description="Target SA with US-restricted BQCA data access" \
+    --display-name="BQCA Restricted SA"
+
+# 2. Grant BQCA and BigQuery execution permissions to target SAs
+for SA in bqca-high-priv bqca-restricted; do
+    # Call BQCA agent
+    gcloud projects add-iam-policy-binding your-project \
+        --member="serviceAccount:${SA}@your-project.iam.gserviceaccount.com" \
+        --role="roles/geminidataanalytics.dataAgentUser"
+
+    # Run BigQuery query jobs
+    gcloud projects add-iam-policy-binding your-project \
+        --member="serviceAccount:${SA}@your-project.iam.gserviceaccount.com" \
+        --role="roles/bigquery.jobUser"
+
+    # Read BigQuery metadata and tables
+    gcloud projects add-iam-policy-binding your-project \
+        --member="serviceAccount:${SA}@your-project.iam.gserviceaccount.com" \
+        --role="roles/bigquery.dataViewer"
+done
 ```
 
 ---
